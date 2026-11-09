@@ -7,3 +7,7 @@ data/
 .testdata/
 __pycache__/
 *.pyc
+windows/build/
+windows/dist/
+windows/cloudflared.exe
+windows/icon.ico

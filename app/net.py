@@ -6,6 +6,7 @@
 host 网络模式下解析不到，127.0.0.1 本来就是宿主机，原样返回。
 """
 
+import os
 import socket
 
 from . import db
@@ -14,6 +15,11 @@ LOOPBACK = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
 HOST_GATEWAY = "host.docker.internal"
 
 _gateway_ok = None
+
+
+def native_mode():
+    """Windows / 本机直接跑（非容器）时为 True：127.0.0.1 本来就是这台电脑。"""
+    return os.environ.get("TD_NATIVE") == "1"
 
 
 def gateway_reachable():
@@ -28,7 +34,9 @@ def gateway_reachable():
 
 
 def alias_enabled():
-    return db.get_setting("loopback_means_host", "1") == "1"
+    # 原生运行时 127.0.0.1 就是这台电脑，默认不做替换；容器版本默认替换到宿主机。
+    default = "0" if native_mode() else "1"
+    return db.get_setting("loopback_means_host", default) == "1"
 
 
 def resolve(host):

@@ -17,8 +17,9 @@
 - **两种接入**：面板内新建隧道；或粘贴已有隧道的 Token 直接纳管，需要时「一键接管」为本地配置
 - **状态可视**：在线/连接中/异常/未运行，直接读 cloudflared 的 `/ready`，另有实时日志
 - **端口自检**：添加前可测试「容器 → 目标端口」是否通，避免映射了才发现连不上
-- **端口扫描**：从容器视角扫目标主机（常用端口 / 指定范围 / 全端口），扫到 http 服务直接一键映射
-- **无外部依赖**：单个容器 = Python 面板 + cloudflared，数据落 SQLite，重启自动拉起
+- **端口扫描**：从面板所在机器扫目标主机（常用端口 / 指定范围 / 全端口），扫到 http 服务直接一键映射
+- **两种装法**：NAS / 服务器用 Docker 镜像；普通 Windows 电脑用自带的 `TunnelDeck.exe`，不装 Docker，托盘常驻、可开机自启
+- **无外部依赖**：单个容器（或单个 exe）= Python 面板 + cloudflared，数据落 SQLite，重启自动拉起
 
 ## 目录结构
 
@@ -27,9 +28,12 @@ tunnel-deck/
 ├─ app/
 │  ├─ main.py      FastAPI 路由、登录、状态接口
 │  ├─ cf.py        Cloudflare API（隧道 / DNS / 域名）
+│  ├─ net.py       127.0.0.1 语义（容器内指宿主机，原生指本机）
 │  ├─ runner.py    config.yml 渲染 + cloudflared 进程管理
+│  ├─ scan.py      端口扫描
 │  └─ db.py        SQLite 存储
 ├─ web/            单页前端（原生 JS，无构建步骤）
+├─ windows/        Windows 原生版启动器（托盘 + 内嵌窗口 + 开机自启）
 ├─ Dockerfile      多阶段：从 cloudflare/cloudflared 取二进制
 ├─ docker-compose.yml
 └─ data/           运行后生成：数据库、凭据、配置、日志（已 gitignore）
@@ -58,7 +62,32 @@ docker compose up -d
 
 想自己构建：把 compose 里的 `build: .` 打开，或 `docker build -t tunnel-deck .`。
 
-标签：`latest` / `1.0` / `1.0.5`；老 NAS、Apple Silicon 会自动取 arm64 版本。
+标签：`latest` / `1.0` / `1.0.6`；老 NAS、Apple Silicon 会自动取 arm64 版本。
+
+### Windows 电脑：不装 Docker 也能用
+
+普通 Windows 电脑（Win10/11）不用装 Docker Desktop，直接下单个 exe：
+
+1. 从 [Releases](https://github.com/jerryzwj/tunnel-deck/releases) 下载 `TunnelDeck.exe`，放到一个不会被顺手清理的目录（例如 `D:\Tools\TunnelDeck\`）
+2. 双击运行：开一个小窗口显示面板，右下角托盘出现 **TD** 图标
+3. 第一次打开还是初始化向导（设密码、填 Account ID / Token），和 Docker 版完全一样
+4. 点窗口右上角 **X 只是收进托盘**，面板和隧道继续跑；托盘图标双击 / 菜单「打开面板」再叫回来
+5. 托盘菜单勾 **开机自启**：写一个启动项，开机后静默进托盘、不弹窗
+
+exe 里已经打包了 `cloudflared.exe`（约 53 MB），不需要另外装。数据放在 `%APPDATA%\TunnelDeck\`：
+
+```
+%APPDATA%\TunnelDeck\
+├─ config.json        端口、监听地址、数据目录（可手改）
+├─ data\              数据库、隧道凭据、config.yml、日志
+└─ launcher.log       启动/报错记录
+```
+
+- 想换端口或让局域网别的设备也能访问：改 `config.json` 里的 `port` / `bind`（`bind` 改成 `0.0.0.0` 就是局域网可访问，注意面板密码）
+- 想沿用已有的数据：把 `data_dir` 指到老的 `data` 目录，比如 `"data_dir": "D:\\code\\tunnel-deck\\data"`
+- 卸载 / 关自启：托盘菜单取消勾选「开机自启」，再删掉 `%APPDATA%\TunnelDeck` 和 exe 即可
+
+自己打包：`powershell -ExecutionPolicy Bypass -File windows\build.ps1`（会自动下载 cloudflared、生成图标、出 `windows\dist\TunnelDeck.exe`）。
 
 **首次访问就是初始化向导**，三步顺手做完：
 

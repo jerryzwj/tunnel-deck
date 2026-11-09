@@ -5,6 +5,7 @@ import ipaddress
 import os
 import re
 import socket
+import sys
 import time
 from typing import Optional
 
@@ -17,10 +18,20 @@ from pydantic import BaseModel
 from . import db, net, runner, scan
 from .cf import Cloudflare, CloudflareError, decode_token
 
-WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
+def _web_dir():
+    """容器 / 源码 / PyInstaller 打包后的 exe 都能找到前端文件。"""
+    env = os.environ.get("TD_WEB_DIR")
+    if env and os.path.isdir(env):
+        return env
+    if getattr(sys, "frozen", False):
+        return os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)), "web")
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
+
+
+WEB_DIR = _web_dir()
 SESSION_COOKIE = "td_session"
 SESSION_TTL = 7 * 24 * 3600
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 
 app = FastAPI(title="TunnelDeck", docs_url=None, redoc_url=None)
 db.init()
@@ -711,6 +722,8 @@ def panel_info(request: Request):
     require_auth(request)
     return {"hostname": net.self_name(), "ip": net.self_ip(),
             "gateway": net.gateway_ip(), "loopback_alias": net.alias_enabled(),
+            "mode": "native" if net.native_mode() else "docker",
+            "cloudflared": runner.cloudflared_version(),
             "version": VERSION}
 
 

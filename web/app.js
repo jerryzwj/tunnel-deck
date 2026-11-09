@@ -728,7 +728,9 @@ async function openSettings() {
   let info = null;
   try { info = await api("/api/info"); } catch (e) { info = null; }
   const infoLine = info
-    ? `<div class="scan-tip">面板运行在 <code>${esc(info.hostname)}</code>${info.ip ? `（${esc(info.ip)}）` : ""}；扫描、映射都以这台机器为准${info.gateway ? `，<code>127.0.0.1</code> 会指向 ${esc(info.gateway)}` : ""}。</div>`
+    ? (info.mode === "native"
+      ? `<div class="scan-tip">面板直接运行在这台电脑上<code>${esc(info.hostname)}</code>${info.ip ? `（${esc(info.ip)}）` : ""}；<code>127.0.0.1</code> 就是它自己，扫描和映射都指向本机端口。</div>`
+      : `<div class="scan-tip">面板运行在 <code>${esc(info.hostname)}</code>${info.ip ? `（${esc(info.ip)}）` : ""}；扫描、映射都以这台机器为准${info.gateway ? `，<code>127.0.0.1</code> 会指向 ${esc(info.gateway)}` : ""}${info.cloudflared ? `。cloudflared：${esc(info.cloudflared)}` : ""}</div>`)
     : "";
   openModal(`
     <h2>设置</h2>

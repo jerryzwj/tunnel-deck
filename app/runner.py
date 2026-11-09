@@ -43,6 +43,23 @@ def _append_log(tid, line):
         pass
 
 
+_bin_version = None
+
+
+def cloudflared_version():
+    """界面上显示 cloudflared 版本，顺便当作「二进制在不在」的自检。"""
+    global _bin_version
+    if _bin_version is None:
+        try:
+            out = subprocess.run([VENV_BIN, "--version"], capture_output=True,
+                                 text=True, timeout=8)
+            text = (out.stdout or out.stderr or "").strip().splitlines()
+            _bin_version = text[0] if text else "未知"
+        except Exception as e:
+            _bin_version = f"不可用（{e}）"
+    return _bin_version
+
+
 def service_url(m):
     if m.get("scheme") in ("http", "https"):
         return f"{m['scheme']}://{net.resolve(m['host'])}:{int(m['port'])}"
@@ -74,7 +91,7 @@ def render_config(tunnel, mappings):
 
     cfg = {
         "tunnel": cf_id,
-        "credentials-file": cred_path,
+        "credentials-file": cred_path.replace("\\", "/"),
         "no-autoupdate": True,
         "metrics": f"127.0.0.1:{int(tunnel['metrics_port'])}",
         "protocol": PROTOCOL,
