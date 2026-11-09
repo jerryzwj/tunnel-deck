@@ -15,7 +15,7 @@ import time
 import urllib.request
 
 APP_NAME = "TunnelDeck"
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 DEFAULT_PORT = 8787
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -283,6 +283,11 @@ def quit_app():
     global _quitting
     _quitting = True
     try:
+        from app import runner
+        runner.stop_all()
+    except Exception as exc:
+        log(f"stop_all 失败: {exc}")
+    try:
         if _window is not None:
             _window.destroy()
     except Exception:
@@ -293,6 +298,29 @@ def quit_app():
     except Exception:
         pass
     os._exit(0)
+
+
+def kill_orphans():
+    """上一份程序被强杀后 cloudflared 会留下来占着 metrics 端口，启动前先清掉自己的孤儿。"""
+    if os.name != "nt":
+        return
+    try:
+        ps = (
+            "Get-CimInstance Win32_Process -Filter \"Name='cloudflared.exe'\" | "
+            "Where-Object { $_.CommandLine -like '*TunnelDeck*' } | "
+            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; "
+            "Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | "
+            "Where-Object { $_.LocalPort -ge 20241 -and $_.LocalPort -le 20260 } | "
+            "Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { "
+            "$p = Get-Process -Id $_ -ErrorAction SilentlyContinue; "
+            "if ($p -and $p.ProcessName -like 'cloudflared*') { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }"
+        )
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                       capture_output=True, timeout=25,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        log("已清理残留 cloudflared 进程")
+    except Exception as exc:
+        log(f"清理残留进程失败: {exc}")
 
 
 def start_tray():
@@ -348,6 +376,7 @@ def main():
 
     silent = "--silent" in sys.argv
     load_config()
+    kill_orphans()
     start_server_thread()
 
     url = base_url()

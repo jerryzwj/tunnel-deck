@@ -31,7 +31,7 @@ def _web_dir():
 WEB_DIR = _web_dir()
 SESSION_COOKIE = "td_session"
 SESSION_TTL = 7 * 24 * 3600
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 
 app = FastAPI(title="TunnelDeck", docs_url=None, redoc_url=None)
 db.init()

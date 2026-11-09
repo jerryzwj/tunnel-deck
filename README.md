@@ -62,7 +62,7 @@ docker compose up -d
 
 想自己构建：把 compose 里的 `build: .` 打开，或 `docker build -t tunnel-deck .`。
 
-标签：`latest` / `1.0` / `1.0.6`；老 NAS、Apple Silicon 会自动取 arm64 版本。
+标签：`latest` / `1.0` / `1.0.7`；老 NAS、Apple Silicon 会自动取 arm64 版本。
 
 ### Windows 电脑：不装 Docker 也能用
 

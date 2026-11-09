@@ -2,6 +2,7 @@ import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -133,22 +134,52 @@ def _next_metrics_port():
     return port
 
 
+def _port_free(port):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("127.0.0.1", int(port)))
+        return True
+    except OSError:
+        return False
+
+
 def assign_metrics_port(tunnel):
+    port = tunnel.get("metrics_port")
+    if port and _port_free(port):
+        return port
+    port = BASE_METRICS_PORT
+    used = {int(t["metrics_port"]) for t in db.list_tunnels() if t.get("metrics_port")}
+    while port in used or not _port_free(port):
+        port += 1
     if tunnel.get("metrics_port"):
-        return tunnel["metrics_port"]
-    port = _next_metrics_port()
+        # 老进程还占着端口（比如上一份程序被杀但 cloudflared 留了下来）
+        _append_log(tunnel["id"], f"[panel] metrics 端口 {tunnel['metrics_port']} 被占用，改用 {port}")
     db.update_tunnel(tunnel["id"], metrics_port=port)
+    tunnel["metrics_port"] = port
     return port
+
+
+def stop_all():
+    """退出前把本进程拉起的 cloudflared 全部收掉，别留孤儿占端口。"""
+    for tid in list(_procs.keys()):
+        try:
+            stop(tid, timeout=3)
+        except Exception:
+            pass
 
 
 def _reader(proc, tid):
     try:
         for line in proc.stdout:
             _append_log(tid, line)
-    except Exception as e:  # process closed
+    except Exception as e:  # 管道被关掉 / 解码出错
         _append_log(tid, f"[panel] 日志读取结束：{e}")
     finally:
-        rc = proc.poll()
+        try:
+            rc = proc.wait(timeout=3)
+        except Exception:
+            rc = proc.poll()
         _append_log(tid, f"[panel] cloudflared 已退出，退出码 {rc}")
 
 
@@ -160,6 +191,8 @@ def is_running(tid):
 
 def start(tunnel, mappings=None, restart=False):
     tid = tunnel["id"]
+    if not tunnel.get("metrics_port") or not _port_free(tunnel["metrics_port"]):
+        assign_metrics_port(tunnel)
     if tunnel.get("mode") == "token" and tunnel.get("token"):
         cmd = [VENV_BIN, "--no-autoupdate", "tunnel", "--metrics",
                f"127.0.0.1:{int(tunnel['metrics_port'])}", "run", "--token", tunnel["token"]]
@@ -182,8 +215,13 @@ def start(tunnel, mappings=None, restart=False):
         _logs[tid] = deque(maxlen=1200)
         _append_log(tid, f"[panel] 启动：{' '.join(cmd[:4])} ...")
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, bufsize=1)
+            popen_kw = dict(stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, bufsize=1,
+                            encoding="utf-8", errors="replace")
+            if os.name == "nt":
+                # 原生 exe 是窗口程序，不给 cloudflared 弹控制台窗口
+                popen_kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            proc = subprocess.Popen(cmd, **popen_kw)
         except FileNotFoundError:
             _append_log(tid, "[panel] 找不到 cloudflared 可执行文件，请确认镜像构建正确")
             return {"running": False, "error": "cloudflared 未安装"}
