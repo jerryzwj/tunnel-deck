@@ -1,0 +1,9 @@
+data/
+.env
+.tmp-*
+.smoke/
+.verify/
+.devdata/
+.testdata/
+__pycache__/
+*.pyc

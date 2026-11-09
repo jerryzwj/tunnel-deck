@@ -1,0 +1,26 @@
+services:
+  tunnel-deck:
+    # 直接用 Docker Hub 上的镜像（amd64 + arm64）
+    image: hallezwj/tunnel-deck:latest
+    # 想改代码自己构建，取消下面这行注释，并把 image 换成本地 tag
+    # build: .
+    container_name: tunnel-deck
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      # 留空 = 首次打开面板走初始化向导，在网页里设密码
+      # 想固定密码就在 .env 里写 PANEL_PASSWORD=xxx
+      PANEL_PASSWORD: ${PANEL_PASSWORD:-}
+      # 一般留空，进面板后在「设置」里填；填了则面板里是只读
+      CF_API_TOKEN: ${CF_API_TOKEN:-}
+      CF_ACCOUNT_ID: ${CF_ACCOUNT_ID:-}
+      TUNNEL_PROTOCOL: ${TUNNEL_PROTOCOL:-auto}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # 需要让容器直接访问宿主机 / 局域网全部端口时，可改用 host 网络（Linux）：
+    # network_mode: host
+    # ports: []          # host 模式下无需端口映射，面板直接监听 8787

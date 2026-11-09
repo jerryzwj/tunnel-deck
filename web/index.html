@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TunnelDeck · 内网穿透面板</title>
+<link rel="stylesheet" href="/assets/style.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<!-- 首次初始化 -->
+<div id="setupView" class="login-wrap hidden">
+  <div class="login-card setup-card">
+    <div class="brand-mark">TD</div>
+    <h1>首次初始化</h1>
+    <p class="muted">密码只存在数据卷里，Cloudflare 那两串可以稍后再填。</p>
+    <form id="setupForm">
+      <div class="setup-step"><span class="idx">1</span>设置面板访问密码</div>
+      <input id="setupPw" type="password" placeholder="访问密码（至少 6 位）" autocomplete="new-password" required>
+      <input id="setupPw2" type="password" placeholder="再输一遍确认" autocomplete="new-password" required>
+      <div class="setup-step"><span class="idx">2</span>连接 Cloudflare（可跳过）</div>
+      <input id="setupAccount" placeholder="Account ID（32 位，控制台右侧可复制）" autocomplete="off">
+      <input id="setupToken" placeholder="API Token（cfut_… 开头）" autocomplete="off">
+      <div class="guide-tip">不知道去哪拿？<a href="#" id="setupHelp">看获取指引</a>。留空也能进面板，之后在「设置」里补。</div>
+      <button type="submit" class="primary full">完成初始化，进入面板</button>
+    </form>
+    <p class="hint" id="setupHint"></p>
+  </div>
+</div>
+
+<!-- 登录 -->
+<div id="loginView" class="login-wrap hidden">
+  <div class="login-card">
+    <div class="brand-mark">TD</div>
+    <h1>TunnelDeck</h1>
+    <p class="muted">内网穿透控制台 · Cloudflare Tunnel</p>
+    <form id="loginForm">
+      <input id="loginPassword" type="password" placeholder="面板访问密码" autocomplete="current-password" required>
+      <button type="submit" class="primary full">进入面板</button>
+    </form>
+    <p class="hint" id="loginHint"></p>
+  </div>
+</div>
+
+<!-- 主界面 -->
+<div id="mainView" class="app hidden">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark sm">TD</span>
+      <div>
+        <div class="brand-name">TunnelDeck</div>
+        <div class="brand-sub">内网穿透 · 端口映射</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="accountChip" class="chip"></span>
+      <span id="autoDnsChip" class="chip"></span>
+      <button class="ghost" id="btnSettings">设置</button>
+      <button class="ghost" id="btnLogout">退出</button>
+    </div>
+  </header>
+
+  <div id="tokenBanner" class="banner hidden">
+    还没配置 Cloudflare API Token，现在只能浏览不能新建隧道 ——
+    <a href="#" id="bannerLink">去设置里填</a>
+  </div>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <span>连接</span>
+        <div class="row-gap">
+          <button class="mini" id="btnNewTunnel">+ 新建</button>
+          <button class="mini" id="btnImportToken">导入</button>
+        </div>
+      </div>
+      <div id="tunnelList" class="tunnel-list"></div>
+      <div class="sidebar-tip">
+        目标主机填 <code>127.0.0.1</code> 就是你装面板这台机器（容器内会自动换成宿主机地址）；也可以填局域网 IP 或同一 Docker 网络的容器名。
+      </div>
+      <datalist id="zoneList"></datalist>
+    </aside>
+    <main class="content" id="content"></main>
+  </div>
+</div>
+
+<div id="modal" class="modal hidden"><div class="modal-card" id="modalCard"></div></div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>
