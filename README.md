@@ -4,6 +4,9 @@
 
 不用手写 `config.yml`，不用每次进控制台点来点去，也不用给每台机器装 cloudflared。
 
+[![Docker Image](https://img.shields.io/badge/docker-hallezwj%2Ftunnel--deck-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/hallezwj/tunnel-deck)
+[![GitHub](https://img.shields.io/badge/source-jerryzwj%2Ftunnel--deck-181717?logo=github&logoColor=white)](https://github.com/jerryzwj/tunnel-deck)
+
 ---
 
 ## 特性
