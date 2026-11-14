@@ -18,6 +18,7 @@ async function api(path, opts = {}) {
     headers: { "Content-Type": "application/json" },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
     credentials: "same-origin",
+    cache: "no-store",
   });
   let data = {};
   try { data = await res.json(); } catch (e) { /* ignore */ }
@@ -67,6 +68,15 @@ function confirmDialog(title, text, okLabel, onOk) {
 
 function tunnelById(id) { return state.tunnels.find(t => t.id === id); }
 function mappingsOf(id) { return state.mappings[id] || []; }
+
+// 新建/编辑后先把服务端返回的这条塞进本地状态，列表立刻能看见，
+// 不依赖随后的 /api/state（网络慢或状态接口失败时也不会“看起来没加上”）。
+function rememberMapping(tid, m) {
+  if (!m) return;
+  const list = state.mappings[tid] || (state.mappings[tid] = []);
+  const i = list.findIndex(x => String(x.id) === String(m.id));
+  if (i >= 0) list[i] = m; else list.push(m);
+}
 
 /* --------------------------------------------------------------- bootstrap */
 async function loadState() {
@@ -379,6 +389,7 @@ async function quickAdd() {
   try {
     const r = await api(`/api/tunnels/${t.id}/mappings`, { method: "POST", body });
     $("#qSub").value = ""; $("#qPort").value = ""; $("#qNote").value = "";
+    rememberMapping(t.id, r.mapping);
     await refreshCurrent();
     renderContent();
     if (r.warnings && r.warnings.length) toast(r.warnings[0], "err");
@@ -492,11 +503,12 @@ async function addFromScan(btn) {
   const hostname = sub ? (sub.includes(".") ? sub : `${sub}.${domain}`) : `p${port}.${domain}`;
   btn.disabled = true;
   try {
-    await api(`/api/tunnels/${t.id}/mappings`, {
+    const added = await api(`/api/tunnels/${t.id}/mappings`, {
       method: "POST",
       body: { hostname, scheme, host, port, note: host },
     });
     localStorage.setItem("td_last_zone", domain);
+    rememberMapping(t.id, added.mapping);
     await refreshCurrent();
     renderContent();
     btn.textContent = "已添加";
@@ -753,6 +765,10 @@ async function openSettings() {
     <label class="switch"><input type="checkbox" id="sAutoDns" ${s.auto_dns ? "checked" : ""}> 新建映射时自动创建 DNS 记录</label>
     <label class="switch"><input type="checkbox" id="sLoopback" ${s.loopback_alias ? "checked" : ""}> 把 <code>127.0.0.1</code> / <code>localhost</code> 当作宿主机 IP</label>
     <div class="scan-tip">面板跑在容器里，容器自己的 127.0.0.1 不是你的 NAS / 电脑。勾上后，填 127.0.0.1 会被换成容器能访问宿主机的那条地址（<code>host.docker.internal</code>），扫描、测试和映射都一致。用 host 网络部署时无需替换，会自动保持原样。</div>
+    <div class="scan-tip" style="margin-top:14px">
+      项目主页：<a href="https://github.com/jerryzwj/tunnel-deck" target="_blank" rel="noreferrer">github.com/jerryzwj/tunnel-deck</a>
+      ${info?.version ? ` · 版本 ${esc(info.version)}` : ""} · 源码、Docker 镜像与 Windows 版都在里面
+    </div>
     <div class="modal-actions">
       <button data-close>取消</button>
       <button class="primary" id="sSave">保存并校验</button>

@@ -15,7 +15,7 @@ import time
 import urllib.request
 
 APP_NAME = "TunnelDeck"
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 DEFAULT_PORT = 8787
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

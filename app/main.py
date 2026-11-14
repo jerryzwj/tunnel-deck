@@ -31,9 +31,21 @@ def _web_dir():
 WEB_DIR = _web_dir()
 SESSION_COOKIE = "td_session"
 SESSION_TTL = 7 * 24 * 3600
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 
 app = FastAPI(title="TunnelDeck", docs_url=None, redoc_url=None)
+
+
+@app.middleware("http")
+async def no_store_api(request: Request, call_next):
+    """接口一律不缓存：否则新增映射后前端拿到的还是旧快照，要手动刷新才出现。"""
+    resp = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+    return resp
+
+
 db.init()
 
 if db.get_setting("session_secret") is None:
