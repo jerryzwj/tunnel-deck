@@ -190,7 +190,7 @@ function renderContent() {
         </div>
       </div>
       <div class="detail-actions">
-        ${t.mode === "token" ? `<button class="primary" id="takeoverBtn">接管到面板</button>` : ""}
+        ${t.mode === "token" ? `<button class="primary" id="rebuildBtn">重建为本地</button>` : ""}
         <button id="restartBtn">重启</button>
         <button id="toggleRunBtn">${st.running ? "停止" : "启动"}</button>
         <button id="configBtn">查看配置</button>
@@ -259,7 +259,7 @@ function renderContent() {
   $("#configBtn").onclick = showConfig;
   $("#deleteTunnelBtn").onclick = deleteTunnel;
   $("#syncDnsBtn").onclick = syncDns;
-  $("#takeoverBtn")?.addEventListener("click", takeoverTunnel);
+  $("#rebuildBtn")?.addEventListener("click", rebuildTunnel);
   $("#qAdd").onclick = quickAdd;
   $("#qTest").onclick = testPort;
   $("#qScan").onclick = openScanModal;
@@ -599,14 +599,21 @@ async function showConfig() {
     <div class="modal-actions"><button data-close>关闭</button></div>`);
 }
 
-async function takeoverTunnel() {
+async function rebuildTunnel() {
   const t = tunnelById(state.currentId);
-  confirmDialog("接管这条连接", "将把该隧道切换为「本地配置」，之后控制台里的映射不再生效，全部由本面板管理。", "确认接管", async () => {
-    await api(`/api/tunnels/${t.id}/takeover`, { method: "POST" });
-    await refreshCurrent();
-    renderContent();
-    toast("已接管，现在可以在这里加映射了", "ok");
-  });
+  confirmDialog(
+    "重建为本地连接",
+    "Cloudflare 已不支持把「控制台托管」的隧道改成面板托管。这里会新建一条本地托管隧道，把现有映射全部迁过去、DNS 自动改指新隧道，旧连接保留但在面板里停用。原来控制台里的配置不再影响访问。",
+    "开始重建",
+    async () => {
+      const r = await api(`/api/tunnels/${t.id}/rebuild-local`, { method: "POST" });
+      state.currentId = r.tunnel.id;
+      await refreshCurrent();
+      renderContent();
+      if (r.warnings && r.warnings.length) toast(r.warnings[0], "err");
+      else toast(`已重建并迁移 ${r.mappings} 条映射，DNS 已改指新隧道`, "ok");
+    }
+  );
 }
 
 function deleteTunnel() {
@@ -687,7 +694,7 @@ function openImportToken() {
       <label class="field-label">名称（可选）</label>
       <input id="iName" placeholder="留空则读取 Cloudflare 上的隧道名">
     </div>
-    <div class="tabs-note">导入后默认沿用控制台配置；想让面板下发映射，点详情里的「接管到面板」。</div>
+    <div class="tabs-note">导入后默认沿用控制台配置；想让面板下发映射，点详情里的「重建为本地」。</div>
     <div class="modal-actions">
       <button data-close>取消</button>
       <button class="primary" id="iOk">导入</button>

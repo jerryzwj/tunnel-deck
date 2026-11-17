@@ -14,7 +14,7 @@
 - **快速映射**：子域名 + 端口两步搞定，自动生成 cloudflared 配置并热重启
 - **自动 DNS**：按域名自动找到所属 Zone，创建/更新 `CNAME → <隧道ID>.cfargotunnel.com`（已代理）
 - **多连接**：一个面板管理多条隧道（家里 NAS、公司测试机、临时演示……）
-- **两种接入**：面板内新建隧道；或粘贴已有隧道的 Token 直接纳管，需要时「一键接管」为本地配置
+- **两种接入**：面板内新建隧道；或粘贴已有隧道的 Token 直接纳管，需要面板下发配置时「一键重建为本地」
 - **状态可视**：在线/连接中/异常/未运行，直接读 cloudflared 的 `/ready`，另有实时日志
 - **端口自检**：添加前可测试「容器 → 目标端口」是否通，避免映射了才发现连不上
 - **端口扫描**：从面板所在机器扫目标主机（常用端口 / 指定范围 / 全端口），扫到 http 服务直接一键映射
@@ -62,7 +62,7 @@ docker compose up -d
 
 想自己构建：把 compose 里的 `build: .` 打开，或 `docker build -t tunnel-deck .`。
 
-标签：`latest` / `1.0` / `1.0.9`；老 NAS、Apple Silicon 会自动取 arm64 版本。
+标签：`latest` / `1.0` / `1.0.10`；老 NAS、Apple Silicon 会自动取 arm64 版本。
 
 ### Windows 电脑：不装 Docker 也能用
 
@@ -127,7 +127,7 @@ exe 里已经打包了 `cloudflared.exe`（约 53 MB），不需要另外装。�
 4. Continue → **Create Token** → 复制 `cfut_` 开头那串
    ⚠️ 只显示一次，关掉页面就看不到了，先粘到设置里再说。
 
-这两条权限分别对应：新建/接管/删除隧道、给映射的域名写 CNAME。少任何一条，面板都会在对应操作上给出 Cloudflare 原始报错。
+这两条权限分别对应：新建/重建/删除隧道、给映射的域名写 CNAME。少任何一条，面板都会在对应操作上给出 Cloudflare 原始报错。
 
 ### 隧道 Token（导入已有隧道用）
 
@@ -144,7 +144,8 @@ exe 里已经打包了 `cloudflared.exe`（约 53 MB），不需要另外装。�
 
 **B. 导入已有隧道**
 「导入」→ 粘贴安装命令里的 `--token` 那串 → 立刻接管运行。
-这种隧道默认还是「控制台托管」，映射配置以 Cloudflare 控制台为准；点详情里的「**接管到面板**」才会切换成由本面板下发 `config.yml`（切换后控制台里的映射失效）。
+这种隧道默认还是「控制台托管」，映射配置以 Cloudflare 控制台为准。想让面板下发 `config.yml`，点详情里的「**重建为本地**」：面板会新建一条本地托管隧道，把现有映射迁过去、DNS 自动改指新隧道，旧连接保留但在面板里停用。
+> 为什么不原地切换：Cloudflare 现在不接受通过 API 修改隧道的 `config_src`（请求返回成功但值不变），所以「接管」只能靠重建实现。
 
 **C. 只想跑起来、不改结构**
 导入 Token 后直接用，面板只负责进程守护和日志。
@@ -242,8 +243,8 @@ docker exec -it tunnel-deck python -c "import urllib.request;print(urllib.reques
 **DNS 没自动建**
 Token 少了 `DNS:Edit`，或该域名不在这个账号下。可点「同步全部 DNS」重试，或手动加 CNAME 到 `<隧道ID>.cfargotunnel.com`（代理开启）。
 
-**接管后控制台里的映射没了**
-正常现象：`config_src` 从 `cloudflare` 切成 `local` 后，路由以本面板生成的 `config.yml` 为准。
+**点了「重建为本地」之后**
+面板会新建一条本地托管隧道并迁移映射，DNS 的 CNAME 会改指新隧道 ID；旧连接被停用但不会被删，确认无误后可在控制台自行删除。
 
 **忘了面板密码 / 想重走一次初始化**
 密码只存在数据卷里，没有找回入口。删掉 `data/tunnel-deck.db` 里的密码记录即可重走向导（连接和映射都在同一张库里，删之前先备份）：
@@ -268,7 +269,7 @@ docker exec tunnel-deck python -c "import sqlite3;c=sqlite3.connect('/data/tunne
 | POST | `/api/settings` | 保存 Token / Account ID / 自动 DNS / 面板密码 |
 | POST | `/api/tunnels` | 新建隧道 |
 | POST | `/api/tunnels/import` | 用 Token 导入 |
-| POST | `/api/tunnels/{id}/takeover` | 切换为本地配置 |
+| POST | `/api/tunnels/{id}/rebuild-local` | 新建本地隧道、迁移映射、DNS 改指（替代已不可用的原地接管） |
 | POST | `/api/tunnels/{id}/start\|stop\|restart` | 进程控制 |
 | GET | `/api/tunnels/{id}/status` | 在线状态 + 日志尾巴 |
 | GET | `/api/tunnels/{id}/config` | 当前生成的 config.yml |

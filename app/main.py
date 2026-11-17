@@ -31,7 +31,7 @@ def _web_dir():
 WEB_DIR = _web_dir()
 SESSION_COOKIE = "td_session"
 SESSION_TTL = 7 * 24 * 3600
-VERSION = "1.0.9"
+VERSION = "1.0.10"
 
 app = FastAPI(title="TunnelDeck", docs_url=None, redoc_url=None)
 
@@ -432,7 +432,7 @@ def import_tunnel(body: ImportBody, request: Request):
             result["remote"] = False
             result["warnings"].append(
                 "这条隧道在当前 API Token 所属账号下查不到，可能来自另一个 Cloudflare 账号或已被删除："
-                "面板能运行它、看日志，但「接管到面板」和自动 DNS 会失败。")
+                "面板能运行它、看日志，但自动 DNS 和「重建为本地」都会失败。")
     except Exception:
         pass
     return result
@@ -453,6 +453,62 @@ def patch_tunnel(tid: str, body: TunnelPatch, request: Request):
     return {"tunnel": tunnel_public(db.get_tunnel(tid))}
 
 
+@app.post("/api/tunnels/{tid}/rebuild-local")
+def rebuild_local(tid: str, request: Request):
+    """云端托管的连接无法原地改成面板托管（Cloudflare 已不支持改 config_src），
+    只能新建一条本地托管隧道，把映射迁过去、DNS 改指新隧道，旧记录停用不删除。"""
+    require_auth(request)
+    t = db.get_tunnel(tid)
+    if not t:
+        raise HTTPException(status_code=404, detail="连接不存在")
+    if not has_token():
+        raise HTTPException(status_code=400, detail="重建需要 Cloudflare API Token，请先在设置里填好")
+    cf = get_cf()
+    new_name = ((t["name"] or "tunnel") + "-local")[:60]
+    try:
+        created = cf.create_tunnel(new_name)
+    except CloudflareError as e:
+        raise HTTPException(status_code=400, detail=f"新建隧道失败：{e.message}")
+    new_cf_id = created["id"]
+    tok = created.get("token") or cf.get_tunnel_token(new_cf_id)
+    info = decode_token(tok)
+    nt = db.add_tunnel(name=new_name, cf_id=new_cf_id, account_tag=info["account_tag"],
+                       secret=info["secret"], token=tok, mode="local",
+                       metrics_port=runner._next_metrics_port())
+    warnings = []
+    old_mappings = db.list_mappings(tid)
+    for m in old_mappings:
+        nm = db.add_mapping(nt["id"], hostname=m.get("hostname") or "", path=m.get("path") or "",
+                            scheme=m.get("scheme") or "http", host=m.get("host") or "127.0.0.1",
+                            port=m.get("port"), no_tls_verify=m.get("no_tls_verify") or 0,
+                            http_host_header=m.get("http_host_header") or "", note=m.get("note") or "")
+        if not m.get("hostname"):
+            continue
+        if db.get_setting("auto_dns", "1") != "1":
+            warnings.append(f"{m['hostname']}：自动 DNS 已关闭，需要手动把 CNAME 改指到 {new_cf_id}.cfargotunnel.com")
+            continue
+        try:
+            zone_id, rec_id, changed = cf.ensure_cname(m["hostname"], new_cf_id)
+            db.update_mapping(nm["id"], zone_id=zone_id, dns_record_id=rec_id)
+            old_zone, old_rec = m.get("zone_id"), m.get("dns_record_id")
+            if old_rec and old_zone and (old_zone != zone_id or old_rec != rec_id):
+                try:
+                    cf.delete_dns(old_zone, old_rec)
+                except CloudflareError as e:
+                    warnings.append(f"{m['hostname']}：旧 DNS 记录没删掉（{e.message}）")
+        except CloudflareError as e:
+            warnings.append(f"{m['hostname']}：DNS 没改指到新隧道（{e.message}）")
+    # 旧连接停掉并停用记录，留着方便对照/回滚
+    try:
+        runner.stop(tid)
+    except Exception:
+        pass
+    db.update_tunnel(tid, enabled=0, autostart=0)
+    runner.start(nt)
+    return {"tunnel": tunnel_public(nt), "old_tunnel": tunnel_public(db.get_tunnel(tid)),
+            "mappings": len(old_mappings), "warnings": warnings}
+
+
 @app.post("/api/tunnels/{tid}/takeover")
 def takeover(tid: str, request: Request):
     """把 dashboard 托管的连接切成由本面板下发配置。"""
@@ -464,13 +520,18 @@ def takeover(tid: str, request: Request):
     try:
         cf._request("PATCH", f"/accounts/{cf.account_id}/cfd_tunnel/{t['cf_id']}",
                     json_body={"config_src": "local"})
+        info = cf._request("GET", f"/accounts/{cf.account_id}/cfd_tunnel/{t['cf_id']}")
+        if (info.get("config_src") or "") != "local":
+            raise HTTPException(status_code=400, detail=(
+                "切换失败：Cloudflare 不接受把云端托管的隧道改成面板托管（接口返回成功但 config_src 仍是 cloudflare）。"
+                "这不是 Token 或账号问题。请点「重建为本地」——面板会新建一条本地托管隧道，"
+                "迁移现有映射并把 DNS 改指过去，旧连接保留不动。"))
     except CloudflareError as e:
         if e.code == 1002:
             raise HTTPException(status_code=400, detail=(
-                "切换失败：Cloudflare 上找不到这条隧道（1002 Tunnel not found）。"
-                "常见原因是这条连接用别的账号的 Token 导入，或隧道已在控制台被删除；"
-                "这种情况只能运行它、不能接管或改配置。要由面板管理，请删除这条记录，"
-                "再用当前 API Token 所属账号新建连接、或导入该账号下的隧道 Token。"))
+                f"切换失败：Cloudflare 上找不到这条隧道（1002 Tunnel not found）。"
+                "可能是隧道已在控制台删除，或这条记录来自另一个账号的 Token。"
+                "要由面板管理，请点「重建为本地」，用当前 API Token 新建一条隧道并迁移映射。"))
         raise HTTPException(status_code=400, detail=f"切换失败：{e.message}")
     info = decode_token(t.get("token") or cf.get_tunnel_token(t["cf_id"]))
     db.update_tunnel(tid, mode="local", secret=info["secret"], account_tag=info["account_tag"])
@@ -575,7 +636,7 @@ def add_mapping(tid: str, body: MappingBody, request: Request):
         raise HTTPException(status_code=404, detail="连接不存在")
     if t.get("mode") != "local":
         raise HTTPException(status_code=400,
-                            detail="这条连接仍由 Cloudflare 控制台托管，请先点「接管到面板」")
+                            detail="这条连接仍由 Cloudflare 控制台托管，请先点「重建为本地」")
     hostname = normalize_host(body.hostname or "")
     if not hostname:
         raise HTTPException(status_code=400, detail="请填写要映射的域名")
