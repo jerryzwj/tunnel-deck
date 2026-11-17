@@ -101,6 +101,15 @@ class Cloudflare:
             "GET", f"/accounts/{self.account_id}/cfd_tunnel",
             params={"is_deleted": "false", "per_page": 50}) or []
 
+    def remote_routes(self, cf_id):
+        """读取云端托管隧道在控制台里配置的 ingress 列表（本地配置隧道通常返回空）。"""
+        try:
+            data = self._request("GET", f"/accounts/{self.account_id}/cfd_tunnel/{cf_id}/configurations")
+        except CloudflareError:
+            return []
+        cfg = (data or {}).get("config") or {}
+        return cfg.get("ingress") or []
+
     def create_tunnel(self, name, config_src="local"):
         if not self.account_id:
             raise CloudflareError("还没有填写 Cloudflare Account ID")

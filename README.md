@@ -62,7 +62,7 @@ docker compose up -d
 
 想自己构建：把 compose 里的 `build: .` 打开，或 `docker build -t tunnel-deck .`。
 
-标签：`latest` / `1.0` / `1.0.10`；老 NAS、Apple Silicon 会自动取 arm64 版本。
+标签：`latest` / `1.0` / `1.0.11`；老 NAS、Apple Silicon 会自动取 arm64 版本。
 
 ### Windows 电脑：不装 Docker 也能用
 
@@ -144,7 +144,7 @@ exe 里已经打包了 `cloudflared.exe`（约 53 MB），不需要另外装。�
 
 **B. 导入已有隧道**
 「导入」→ 粘贴安装命令里的 `--token` 那串 → 立刻接管运行。
-这种隧道默认还是「控制台托管」，映射配置以 Cloudflare 控制台为准。想让面板下发 `config.yml`，点详情里的「**重建为本地**」：面板会新建一条本地托管隧道，把现有映射迁过去、DNS 自动改指新隧道，旧连接保留但在面板里停用。
+这种隧道默认还是「控制台托管」，映射配置以 Cloudflare 控制台为准。想让面板下发 `config.yml`，点详情里的「**重建为本地**」：面板会新建一条本地托管隧道，把**面板里的映射和控制台里的路由一起迁过去**、DNS 自动改指新隧道，旧连接保留但在面板里停用。若两边都没有路由，重建会直接取消（不会留下空隧道）。
 > 为什么不原地切换：Cloudflare 现在不接受通过 API 修改隧道的 `config_src`（请求返回成功但值不变），所以「接管」只能靠重建实现。
 
 **C. 只想跑起来、不改结构**
@@ -239,6 +239,9 @@ docker exec -it tunnel-deck python -c "import urllib.request;print(urllib.reques
 
 **状态一直是「连接中」**
 多半是出网受阻：`TUNNEL_PROTOCOL=auto` 会先试 QUIC(7844/udp)，被墙或防火墙拦就退回 http2(7844/tcp/443)。可直接设 `TUNNEL_PROTOCOL=http2`。
+
+**删除映射 / 删除连接会不会把 DNS 也删掉**
+会。删单条映射默认连带删掉它的 CNAME；删整条连接时弹窗里的「同时删除 DNS 记录」默认勾选。记录 id 丢了也不要紧，面板会按域名兜底找那条指向 `*.cfargotunnel.com` 的记录再删；没配 Token 时会返回提示而不是静默跳过。
 
 **DNS 没自动建**
 Token 少了 `DNS:Edit`，或该域名不在这个账号下。可点「同步全部 DNS」重试，或手动加 CNAME 到 `<隧道ID>.cfargotunnel.com`（代理开启）。

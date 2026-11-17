@@ -8,6 +8,7 @@ import socket
 import sys
 import time
 from typing import Optional
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -31,7 +32,7 @@ def _web_dir():
 WEB_DIR = _web_dir()
 SESSION_COOKIE = "td_session"
 SESSION_TTL = 7 * 24 * 3600
-VERSION = "1.0.10"
+VERSION = "1.0.11"
 
 app = FastAPI(title="TunnelDeck", docs_url=None, redoc_url=None)
 
@@ -453,6 +454,31 @@ def patch_tunnel(tid: str, body: TunnelPatch, request: Request):
     return {"tunnel": tunnel_public(db.get_tunnel(tid))}
 
 
+def _ingress_to_mappings(ingress):
+    """把 Cloudflare 控制台的 ingress 转成面板映射；tcp/ssh 等非 HTTP 协议跳过并回报。"""
+    plan, skipped = [], []
+    for e in ingress or []:
+        host = (e.get("hostname") or "").strip().lower()
+        if not host:
+            continue
+        svc = (e.get("service") or "").strip()
+        parts = urlsplit(svc) if "://" in svc else None
+        if not parts or parts.scheme not in ("http", "https") or not parts.hostname:
+            skipped.append(f"{host} → {svc or '空服务'}")
+            continue
+        origin = e.get("originRequest") or {}
+        plan.append({
+            "hostname": host,
+            "path": e.get("path") or "",
+            "scheme": parts.scheme,
+            "host": parts.hostname,
+            "port": parts.port or (443 if parts.scheme == "https" else 80),
+            "no_tls_verify": 1 if origin.get("noTLSVerify") else 0,
+            "http_host_header": origin.get("httpHostHeader") or "",
+        })
+    return plan, skipped
+
+
 @app.post("/api/tunnels/{tid}/rebuild-local")
 def rebuild_local(tid: str, request: Request):
     """云端托管的连接无法原地改成面板托管（Cloudflare 已不支持改 config_src），
@@ -464,6 +490,25 @@ def rebuild_local(tid: str, request: Request):
     if not has_token():
         raise HTTPException(status_code=400, detail="重建需要 Cloudflare API Token，请先在设置里填好")
     cf = get_cf()
+    warnings = []
+    # 迁移来源：面板里的映射 + 控制台里现有的 ingress（导入的连接往往只有后者）
+    old_mappings = db.list_mappings(tid)
+    plan = [dict(m) for m in old_mappings]
+    seen = {((p.get("hostname") or "").lower(), p.get("path") or "") for p in plan}
+    remote, skipped = _ingress_to_mappings(cf.remote_routes(t["cf_id"]))
+    for r in remote:
+        key = (r["hostname"], r["path"])
+        if key in seen:
+            continue
+        seen.add(key)
+        plan.append(r)
+    if skipped:
+        warnings.append("控制台里有 {} 条非 HTTP 路由没能迁移（tcp/ssh 需要在控制台保留）：{}".format(
+            len(skipped), "；".join(skipped[:3])))
+    if not plan:
+        raise HTTPException(status_code=400, detail=(
+            "这条连接在面板和 Cloudflare 控制台都没有可迁移的路由，重建已取消（没有创建任何隧道）。"
+            "请先在控制台配置好路由，或在面板里用「新建连接」+「快速映射」。"))
     new_name = ((t["name"] or "tunnel") + "-local")[:60]
     try:
         created = cf.create_tunnel(new_name)
@@ -475,9 +520,7 @@ def rebuild_local(tid: str, request: Request):
     nt = db.add_tunnel(name=new_name, cf_id=new_cf_id, account_tag=info["account_tag"],
                        secret=info["secret"], token=tok, mode="local",
                        metrics_port=runner._next_metrics_port())
-    warnings = []
-    old_mappings = db.list_mappings(tid)
-    for m in old_mappings:
+    for m in plan:
         nm = db.add_mapping(nt["id"], hostname=m.get("hostname") or "", path=m.get("path") or "",
                             scheme=m.get("scheme") or "http", host=m.get("host") or "127.0.0.1",
                             port=m.get("port"), no_tls_verify=m.get("no_tls_verify") or 0,
@@ -506,7 +549,7 @@ def rebuild_local(tid: str, request: Request):
     db.update_tunnel(tid, enabled=0, autostart=0)
     runner.start(nt)
     return {"tunnel": tunnel_public(nt), "old_tunnel": tunnel_public(db.get_tunnel(tid)),
-            "mappings": len(old_mappings), "warnings": warnings}
+            "mappings": len(plan), "warnings": warnings}
 
 
 @app.post("/api/tunnels/{tid}/takeover")
@@ -540,8 +583,34 @@ def takeover(tid: str, request: Request):
     return {"tunnel": tunnel_public(t)}
 
 
+def _delete_route_dns(cf, m):
+    """删除映射对应的 CNAME：优先按记录 id 删，删不到就按域名兜底找（只删指向 cfargotunnel 的记录）。"""
+    warn = None
+    host = (m.get("hostname") or "").strip()
+    rec_id, zone_id = m.get("dns_record_id"), m.get("zone_id")
+    if rec_id and zone_id:
+        try:
+            cf.delete_dns(zone_id, rec_id)
+            return None
+        except CloudflareError as e:
+            warn = e.message
+    if not host:
+        return warn
+    try:
+        zone = cf.find_zone(host)
+        if not zone:
+            return warn
+        rec = cf.get_cname(zone["id"], host)
+        if rec and ".cfargotunnel.com" in (rec.get("content") or ""):
+            cf.delete_dns(zone["id"], rec["id"])
+            return None
+    except CloudflareError as e:
+        return e.message
+    return warn
+
+
 @app.delete("/api/tunnels/{tid}")
-def remove_tunnel(tid: str, request: Request, delete_cf: bool = False, delete_dns: bool = False):
+def remove_tunnel(tid: str, request: Request, delete_cf: bool = False, delete_dns: bool = True):
     require_auth(request)
     t = db.get_tunnel(tid)
     if not t:
@@ -549,13 +618,14 @@ def remove_tunnel(tid: str, request: Request, delete_cf: bool = False, delete_dn
     runner.stop(tid)
     warnings = []
     if delete_dns:
-        cf = get_cf()
-        for m in db.list_mappings(tid):
-            if m.get("dns_record_id") and m.get("zone_id"):
-                try:
-                    cf.delete_dns(m["zone_id"], m["dns_record_id"])
-                except CloudflareError as e:
-                    warnings.append(e.message)
+        if has_token():
+            cf = get_cf()
+            for m in db.list_mappings(tid):
+                w = _delete_route_dns(cf, m)
+                if w:
+                    warnings.append(f"{m.get('hostname') or '映射'}：DNS 没删掉（{w}）")
+        else:
+            warnings.append("没有配置 Cloudflare API Token，DNS 记录未删除，需要到控制台手动删")
     if delete_cf:
         try:
             get_cf().delete_tunnel(t["cf_id"])
@@ -729,11 +799,13 @@ def remove_mapping(mid: str, request: Request, delete_dns: bool = True):
     if not m:
         raise HTTPException(status_code=404, detail="映射不存在")
     warnings = []
-    if delete_dns and m.get("dns_record_id") and m.get("zone_id") and has_token():
-        try:
-            get_cf().delete_dns(m["zone_id"], m["dns_record_id"])
-        except CloudflareError as e:
-            warnings.append(f"DNS 记录删除失败：{e.message}")
+    if delete_dns and (m.get("hostname") or m.get("dns_record_id")):
+        if has_token():
+            w = _delete_route_dns(get_cf(), m)
+            if w:
+                warnings.append(f"DNS 记录删除失败：{w}")
+        else:
+            warnings.append("没有配置 Cloudflare API Token，DNS 记录未删除，需要到控制台手动删")
     db.delete_mapping(mid)
     t = db.get_tunnel(m["tunnel_id"])
     if t:

@@ -571,10 +571,10 @@ function editMapping(m) {
 
 function deleteMapping(m) {
   confirmDialog("删除映射", `将移除 ${m.hostname}，同时会删除对应的 DNS 记录。`, "删除", async () => {
-    await api(`/api/mappings/${m.id}`, { method: "DELETE" });
+    const r = await api(`/api/mappings/${m.id}`, { method: "DELETE" });
     await refreshCurrent();
     renderContent();
-    toast("已删除", "ok");
+    toast(r.warnings?.length ? r.warnings[0] : "已删除，DNS 已同步清理", r.warnings?.length ? "err" : "ok");
   });
 }
 
@@ -603,7 +603,7 @@ async function rebuildTunnel() {
   const t = tunnelById(state.currentId);
   confirmDialog(
     "重建为本地连接",
-    "Cloudflare 已不支持把「控制台托管」的隧道改成面板托管。这里会新建一条本地托管隧道，把现有映射全部迁过去、DNS 自动改指新隧道，旧连接保留但在面板里停用。原来控制台里的配置不再影响访问。",
+    "Cloudflare 已不支持把「控制台托管」的隧道改成面板托管。这里会新建一条本地托管隧道，把面板里和控制台里的路由一起迁过去、DNS 自动改指新隧道，旧连接保留但在面板里停用。若两边都没有路由，重建会直接取消。",
     "开始重建",
     async () => {
       const r = await api(`/api/tunnels/${t.id}/rebuild-local`, { method: "POST" });
