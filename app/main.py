@@ -31,7 +31,7 @@ def _web_dir():
 WEB_DIR = _web_dir()
 SESSION_COOKIE = "td_session"
 SESSION_TTL = 7 * 24 * 3600
-VERSION = "1.0.8"
+VERSION = "1.0.9"
 
 app = FastAPI(title="TunnelDeck", docs_url=None, redoc_url=None)
 
@@ -615,7 +615,10 @@ def patch_mapping(mid: str, body: MappingPatch, request: Request):
     t = db.get_tunnel(m["tunnel_id"])
     kw = {}
     if body.hostname is not None:
-        kw["hostname"] = normalize_host(body.hostname)
+        host = normalize_host(body.hostname)
+        if not host:
+            raise HTTPException(status_code=400, detail="请填写要映射的域名")
+        kw["hostname"] = host
     if body.path is not None:
         kw["path"] = body.path.strip()
     if body.scheme is not None:
@@ -632,9 +635,30 @@ def patch_mapping(mid: str, body: MappingPatch, request: Request):
         kw["note"] = body.note.strip()
     if body.enabled is not None:
         kw["enabled"] = 1 if body.enabled else 0
+    old_host = (m.get("hostname") or "").lower()
+    new_host = (kw.get("hostname") or old_host).lower()
     updated = db.update_mapping(mid, **kw)
+    warnings = []
+    if new_host != old_host and t:
+        # 改子域名=换一条公网域名，DNS 必须跟着换，否则新域名解析不到隧道
+        if db.get_setting("auto_dns", "1") == "1" and has_token():
+            try:
+                zone_id, rec_id, changed = get_cf().ensure_cname(new_host, t["cf_id"])
+                updated = db.update_mapping(mid, zone_id=zone_id, dns_record_id=rec_id)
+                old_zone, old_rec = m.get("zone_id"), m.get("dns_record_id")
+                if old_rec and old_zone and (old_zone != zone_id or old_rec != rec_id):
+                    try:
+                        get_cf().delete_dns(old_zone, old_rec)
+                    except CloudflareError as e:
+                        warnings.append(f"旧域名 {old_host} 的 DNS 记录没删掉：{e.message}")
+            except CloudflareError as e:
+                warnings.append(f"新域名 {new_host} 的 DNS 记录未自动创建：{e.message}")
+        elif not has_token():
+            warnings.append("还没配置 Cloudflare API Token，新域名的 CNAME 记录要在 Cloudflare 控制台手动加")
+        else:
+            warnings.append("自动 DNS 已关闭，新域名的 CNAME 记录需要手动创建（或到设置里打开自动 DNS）")
     runner.restart(t)
-    return {"mapping": serialize_mapping(updated)}
+    return {"mapping": serialize_mapping(updated), "warnings": warnings}
 
 
 @app.delete("/api/mappings/{mid}")

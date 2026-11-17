@@ -559,10 +559,12 @@ function editMapping(m) {
     };
     closeModal();
     try {
-      await api(`/api/mappings/${m.id}`, { method: "PATCH", body });
+      const r = await api(`/api/mappings/${m.id}`, { method: "PATCH", body });
+      rememberMapping(m.tunnel_id, r.mapping);
       await refreshCurrent();
       renderContent();
-      toast("已保存", "ok");
+      if (r.warnings && r.warnings.length) toast(r.warnings[0], "err");
+      else toast("已保存，DNS 已同步", "ok");
     } catch (e) { toast(e.message, "err"); }
   };
 }
