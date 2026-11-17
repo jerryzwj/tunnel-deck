@@ -32,7 +32,7 @@ def _web_dir():
 WEB_DIR = _web_dir()
 SESSION_COOKIE = "td_session"
 SESSION_TTL = 7 * 24 * 3600
-VERSION = "1.0.11"
+VERSION = "1.0.12"
 
 app = FastAPI(title="TunnelDeck", docs_url=None, redoc_url=None)
 
@@ -716,10 +716,23 @@ def add_mapping(tid: str, body: MappingBody, request: Request):
         raise HTTPException(status_code=400, detail="端口必须在 1-65535 之间")
     host = (body.host or "127.0.0.1").strip()
     service = runner.service_url({"scheme": body.scheme, "host": host, "port": body.port})
-    if body.scheme in ("http", "https"):
-        for m in db.list_mappings(tid):
-            if m["hostname"] == hostname and (m.get("path") or "") == (body.path or ""):
-                raise HTTPException(status_code=400, detail=f"域名 {hostname} 已经映射过了")
+    dup = None
+    for other in db.list_tunnels():
+        for om in db.list_mappings(other["id"]):
+            if (om.get("hostname") or "") == hostname and (om.get("path") or "") == (body.path or ""):
+                dup = (other, om)
+                break
+        if dup:
+            break
+    if dup:
+        other, om = dup
+        same = other["id"] == tid
+        raise HTTPException(status_code=409, detail={
+            "message": "该子域名已有映射" if same else f"该子域名已被连接「{other['name']}」使用",
+            "hint": "可以直接覆盖目标" if same else "换个子域名，或先到那条连接里删掉它",
+            "mapping_id": om["id"], "tunnel_id": other["id"],
+            "tunnel_name": other["name"], "same_tunnel": same,
+        })
 
     m = db.add_mapping(tid, hostname=hostname, path=(body.path or "").strip(),
                        scheme=body.scheme, host=host, port=body.port,
@@ -768,6 +781,18 @@ def patch_mapping(mid: str, body: MappingPatch, request: Request):
         kw["enabled"] = 1 if body.enabled else 0
     old_host = (m.get("hostname") or "").lower()
     new_host = (kw.get("hostname") or old_host).lower()
+    if new_host != old_host:
+        for other in db.list_tunnels():
+            for om in db.list_mappings(other["id"]):
+                if om["id"] == mid:
+                    continue
+                if (om.get("hostname") or "") == new_host and (om.get("path") or "") == (kw.get("path", m.get("path") or "")):
+                    raise HTTPException(status_code=409, detail={
+                        "message": "该子域名已经被其它映射占用",
+                        "hint": "换一个子域名，或先删掉占用的那条",
+                        "mapping_id": om["id"], "tunnel_name": other["name"],
+                        "same_tunnel": other["id"] == m["tunnel_id"],
+                    })
     updated = db.update_mapping(mid, **kw)
     warnings = []
     if new_host != old_host and t:

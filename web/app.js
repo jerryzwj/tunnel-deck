@@ -23,8 +23,13 @@ async function api(path, opts = {}) {
   let data = {};
   try { data = await res.json(); } catch (e) { /* ignore */ }
   if (!res.ok) {
-    const msg = data.detail || data.message || `请求失败（HTTP ${res.status}）`;
-    throw new Error(msg);
+    const d = data.detail;
+    const msg = (d && typeof d === "object" && d.message) || (typeof d === "string" ? d : "") ||
+      data.message || `请求失败（HTTP ${res.status}）`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.detail = d;
+    throw err;
   }
   return data;
 }
@@ -386,16 +391,46 @@ async function quickAdd() {
     note: ($("#qNote").value || "").trim(),
     path: "",
   };
+  const btn = $("#qAdd");
+  const btnLabel = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "添加中…"; }
+  toast("正在写入映射并同步 DNS…", "ok");
   try {
     const r = await api(`/api/tunnels/${t.id}/mappings`, { method: "POST", body });
     $("#qSub").value = ""; $("#qPort").value = ""; $("#qNote").value = "";
     rememberMapping(t.id, r.mapping);
+    renderContent();
     await refreshCurrent();
     renderContent();
     if (r.warnings && r.warnings.length) toast(r.warnings[0], "err");
     else toast(`已映射 ${hostname} → ${r.mapping.service}`, "ok");
   } catch (e) {
-    toast(e.message, "err");
+    const d = e.detail;
+    if (d && d.same_tunnel && d.mapping_id) {
+      confirmDialog(
+        "覆盖已有映射",
+        `${hostname} 已经在当前连接里，目标会从原来的服务改成 ${body.scheme}://${body.host}:${body.port}，域名和 DNS 不变。`,
+        "覆盖",
+        async () => {
+          const r2 = await api(`/api/mappings/${d.mapping_id}`, {
+            method: "PATCH",
+            body: { scheme: body.scheme, host: body.host, port: body.port, note: body.note },
+          });
+          try { await api(`/api/mappings/${d.mapping_id}/dns`, { method: "POST" }); } catch (_) { /* DNS 失败不影响保存 */ }
+          $("#qSub").value = ""; $("#qPort").value = ""; $("#qNote").value = "";
+          rememberMapping(t.id, r2.mapping);
+          await refreshCurrent();
+          renderContent();
+          toast("已覆盖原有映射，目标已更新", "ok");
+        }
+      );
+    } else if (d && typeof d === "object" && d.message) {
+      toast(d.hint ? `${d.message}（${d.hint}）` : d.message, "err");
+    } else {
+      toast(e.message, "err");
+    }
+  } finally {
+    if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = btnLabel; }
   }
 }
 

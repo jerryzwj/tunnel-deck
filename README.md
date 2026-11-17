@@ -62,7 +62,7 @@ docker compose up -d
 
 想自己构建：把 compose 里的 `build: .` 打开，或 `docker build -t tunnel-deck .`。
 
-标签：`latest` / `1.0` / `1.0.11`；老 NAS、Apple Silicon 会自动取 arm64 版本。
+标签：`latest` / `1.0` / `1.0.12`；老 NAS、Apple Silicon 会自动取 arm64 版本。
 
 ### Windows 电脑：不装 Docker 也能用
 
@@ -239,6 +239,9 @@ docker exec -it tunnel-deck python -c "import urllib.request;print(urllib.reques
 
 **状态一直是「连接中」**
 多半是出网受阻：`TUNNEL_PROTOCOL=auto` 会先试 QUIC(7844/udp)，被墙或防火墙拦就退回 http2(7844/tcp/443)。可直接设 `TUNNEL_PROTOCOL=http2`。
+
+**同一个子域名加两次会怎样**
+不会悄悄生成两条。同一条连接里重复添加会返回「已存在」，前端弹「覆盖已有映射」，确认后只改目标服务、域名和 DNS 不变；被**别的连接**占用时会直接拦下并告诉你是哪条连接占着，避免把 CNAME 指错隧道。
 
 **删除映射 / 删除连接会不会把 DNS 也删掉**
 会。删单条映射默认连带删掉它的 CNAME；删整条连接时弹窗里的「同时删除 DNS 记录」默认勾选。记录 id 丢了也不要紧，面板会按域名兜底找那条指向 `*.cfargotunnel.com` 的记录再删；没配 Token 时会返回提示而不是静默跳过。
